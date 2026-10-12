@@ -1,0 +1,6 @@
+{
+  "id": "/", "name": "Weather Weave — 比べて、わかる天気。", "short_name": "Weather Weave",
+  "description": "気象モデルを比較してつくる、説明できる天気予報。", "lang": "ja", "start_url": "/", "scope": "/",
+  "display": "standalone", "background_color": "#f4f6f4", "theme_color": "#18394a",
+  "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"}, {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}]
+}

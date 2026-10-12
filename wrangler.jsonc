@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "weather-forecast-api",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-12",
+  "d1_databases": [{ "binding": "DB", "database_name": "weather-forecast", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
+  "vars": { "ALLOWED_ORIGIN": "http://localhost:5173", "COLLECT_LOCATION_IDS": "tokyo", "OPEN_METEO_MODE": "non-commercial" },
+  "triggers": { "crons": ["15 */6 * * *"] },
+  "observability": { "enabled": true }
+}

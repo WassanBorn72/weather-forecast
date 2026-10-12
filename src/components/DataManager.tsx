@@ -1,0 +1,25 @@
+import { useState } from 'react';
+import { Database, LockKeyhole } from 'lucide-react';
+import { jsonRequest, locationQuery } from '../api';
+import { NOAA_STATIONS } from '../providers/noaa';
+import type { Location } from '../domain/types';
+export function DataManager({ location }: { location: Location }) {
+  const [token, setToken] = useState(''), [source, setSource] = useState(''), [csv, setCsv] = useState(''), [run, setRun] = useState(''), [method, setMethod] = useState('single-run'), [start, setStart] = useState(''), [end, setEnd] = useState(''), [offset, setOffset] = useState(1), [station, setStation] = useState(NOAA_STATIONS[location.id] ?? ''), [noaaStart, setNoaaStart] = useState(''), [noaaEnd, setNoaaEnd] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
+  async function submit(path: string, input: unknown) {
+    setBusy(true); setMessage('');
+    try { const result = await jsonRequest<Record<string, unknown>>(`/api/admin/${path}?${locationQuery(location)}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(input) }); setMessage(JSON.stringify(result, null, 2)); } catch (e) { setMessage(e instanceof Error ? e.message : '取り込みに失敗しました'); } finally { setBusy(false); }
+  }
+  return <section><div className="section-heading"><div><p className="eyebrow">BUILD AN HONEST RECORD</p><h2>未来の評価のために、記録する。</h2><p className="muted">{location.name}の予報と実測を、出典付きで保存します。</p></div><Database/></div>
+    <div className="notice"><LockKeyhole size={18}/>管理機能です。Worker SecretにADMIN_TOKENを設定してください。入力したトークンは保存しません。</div>
+    <label className="token-input">管理トークン<input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} placeholder="ADMIN_TOKEN"/></label>
+    <div className="management-grid"><form className="card form-card" onSubmit={e => { e.preventDefault(); void submit('history', method === 'single-run' ? { method, run: `${run}:00Z` } : { method, start, end, daysAgo: offset }); }}><h3>過去に出された予報</h3><label>取得方法<select value={method} onChange={e => setMethod(e.target.value)}><option value="single-run">Single Runs（初期化時刻指定）</option><option value="previous-runs">Previous Runs（固定オフセット）</option></select></label>{method === 'single-run' ? <label>モデル初期化時刻（UTC）<input type="datetime-local" required step="21600" value={run} onChange={e => setRun(e.target.value)}/></label> : <><label>対象期間の開始（UTC）<input type="date" value={start} required onChange={e => setStart(e.target.value)}/></label><label>対象期間の終了（UTC、最大31日）<input type="date" value={end} required onChange={e => setEnd(e.target.value)}/></label><label>何日前の予報<select value={offset} onChange={e => setOffset(Number(e.target.value))}>{[1,2,3,4,5,6,7].map(d => <option value={d} key={d}>{d}日前（{24*d}時間）</option>)}</select></label></>}
+      <p className="small muted">Single Runsは00/06/12/18 UTC・2026-04-02以降。初期化時刻は公開時刻ではありません。取得できないモデルは通知し、他のモデルを保存します。</p><button className="primary-button" disabled={busy || !token}>過去予報を取り込む</button></form>
+      <form className="card form-card" onSubmit={e => { e.preventDefault(); void submit('observations', { csv, source }); }}><h3>実際に観測された天気</h3><label>実測の出典<input value={source} required onChange={e => setSource(e.target.value)} placeholder="機関・観測所・出典URL"/></label><label>観測CSVファイル<input type="file" accept=".csv,text/csv" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; if (file.size > 250000) { setMessage('CSVは250KB以下です'); return; } setCsv(await file.text()); }}/></label><label>CSV内容<textarea value={csv} required onChange={e => setCsv(e.target.value)} rows={6} placeholder={'observed_at,temperature,precipitation,humidity,windSpeed\n2026-10-11T12:00:00+09:00,22.1,0.0,65,2.3'}/></label><p className="small muted">この地点と同じ地点の毎正時観測・℃/mm/m/s。降水はその時刻までの1時間量です。空欄は欠測。最大1,000行。過去の利用可能時刻を捏造せず、取り込み時刻を保存します。</p><button className="primary-button" disabled={busy || !token}>観測を保存する</button></form></div>
+    <form className="card form-card noaa-form" onSubmit={e => { e.preventDefault(); void submit('noaa', { station, start: noaaStart, end: noaaEnd }); }}>
+      <h3>NOAA NCEIから観測を取得（接続検証待ち）</h3><p className="muted small">公式Global Hourly APIを利用します。取得先はwww.ncei.noaa.gov。観測所の応答座標を確認し、地点から25km以内の実測のみ取り込みます。欠測・品質不良・1時間以外の降水量は除外します。</p>
+      <div className="filters"><label>観測所ID（11桁）<input value={station} onChange={e => setStation(e.target.value)} required pattern="[0-9]{11}"/></label><label>開始日（UTC）<input type="date" required value={noaaStart} onChange={e => setNoaaStart(e.target.value)}/></label><label>終了日（UTC、最大31日）<input type="date" required value={noaaEnd} onChange={e => setNoaaEnd(e.target.value)}/></label></div>
+      <button className="primary-button" disabled={busy || !token}>公式APIから実測を取り込む</button><p className="small muted">現在のクラウド環境ではNOAAドメインの許可設定を反映する必要があります。APIの実応答検証が済むまではCSV取り込みを利用できます。観測所と地点の距離・取得遅延に注意してください。</p>
+    </form>
+    {busy && <p role="status">データを取り込んでいます…</p>}{message && <pre className="result-message" role="status">{message}</pre>}
+  </section>;
+}

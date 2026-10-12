@@ -1,0 +1,31 @@
+import { describe, expect, it } from 'vitest';
+import { parseOpenMeteo, buildUrl, OpenMeteoProvider } from '../src/providers/openmeteo';
+import { MODELS } from '../src/providers/models';
+import { LOCATIONS } from '../src/domain/types';
+import { parseObservationCsv } from '../src/server/observations';
+import fixture from './fixtures/openmeteo-jma.json';
+const retrieved='2026-10-12T08:00:00.000Z';
+const parse=(data:unknown,options={})=>parseOpenMeteo(data,LOCATIONS[0],MODELS[0],options,retrieved,'run-1');
+describe('Open-Meteo parser',()=>{
+ it('実APIレスポンスのUTC/単位/欠測を正規化',()=>{const data=parse(fixture);expect(data.hours.length).toBe(3);expect(data.hours[0].values.temperature).toBeTypeOf('number');expect(data.hours[0].values.probability).toBeNull();expect(data.run.issueTime).toBeNull();expect(data.run.initializationTime).toBeNull();expect(data.run.availableAt).toBe(retrieved);});
+ it('初期化時刻と公開時刻を区別する',()=>{const data=parse(fixture,{method:'single-run',run:'2026-10-10T00:00:00Z'});expect(data.run.initializationTime).toBe('2026-10-10T00:00:00.000Z');expect(data.run.issueTime).toBeNull();expect(data.hours[0].leadBasis).toBe('initialization');});
+ it('UTC以外を拒否',()=>expect(()=>parse({...fixture,utc_offset_seconds:32400})).toThrow('UTC'));
+ it('長さの不一致を拒否',()=>expect(()=>parse({...fixture,hourly:{...fixture.hourly,temperature_2m:[1]}})).toThrow('配列長'));
+ it('風速km/hをm/sと誤読しない',()=>expect(()=>parse({...fixture,hourly_units:{...fixture.hourly_units,wind_speed_10m:'km/h'}})).toThrow('単位'));
+ it('対象時刻の重複を拒否',()=>expect(()=>parse({...fixture,hourly:{...fixture.hourly,time:[1,1,2]}})).toThrow('重複'));
+ it('nullを0に置換しない',()=>expect(parse({...fixture,hourly:{...fixture.hourly,precipitation:[null,0,1]}}).hours[0].values.precipitation).toBeNull());
+ it('不正な数値を欠測として扱う',()=>expect(parse({...fixture,hourly:{...fixture.hourly,relative_humidity_2m:[110,-1,50]}}).hours.map(h=>h.values.humidity)).toEqual([null,null,50]));
+ it('モデルを明示しUTCとSI単位を要求',()=>{const url=buildUrl(LOCATIONS[0],MODELS[0]);expect(url.searchParams.get('models')).toBe('jma_gsm');expect(url.searchParams.get('timezone')).toBe('UTC');expect(url.searchParams.get('wind_speed_unit')).toBe('ms');expect(url.searchParams.get('forecast_hours')).toBe('169');expect(url.searchParams.get('hourly')).not.toContain('precipitation_probability');});
+ it('Previous Runsのsuffixと固定リード',()=>{const opts={method:'previous-runs' as const,daysAgo:1,start:'2026-10-01',end:'2026-10-10'};const url=buildUrl(LOCATIONS[0],MODELS[0],opts);expect(url.hostname).toBe('previous-runs-api.open-meteo.com');expect(url.searchParams.get('hourly')).toContain('temperature_2m_previous_day1');const data=parse({utc_offset_seconds:0,hourly:{time:[1],temperature_2m_previous_day1:[10]},hourly_units:{temperature_2m_previous_day1:'°C'}},opts);expect(data.hours[0].leadHours).toBe(24);expect(data.run.issueTime).toBeNull();});
+ it('Previous Runsの誤った日数を拒否',()=>expect(()=>buildUrl(LOCATIONS[0],MODELS[0],{method:'previous-runs',daysAgo:0})).toThrow());
+ it('商用はcustomer endpoint・キーはサーバーのみ',()=>expect(buildUrl(LOCATIONS[0],MODELS[1],{commercial:true,apiKey:'test-only'}).hostname).toBe('customer-api.open-meteo.com'));
+ it('GFS Single Runsは未提供のGEFS確率を要求しない',()=>{const url=buildUrl(LOCATIONS[0],MODELS[2],{method:'single-run',run:'2026-10-10T00:00:00Z'});expect(url.searchParams.get('hourly')).not.toContain('precipitation_probability');expect(url.searchParams.get('hourly')).toContain('temperature_2m');});
+ it('HTTP障害を明示',async()=>{const p=new OpenMeteoProvider((async()=>new Response('{}',{status:503})) as typeof fetch);await expect(p.fetch(LOCATIONS[0],MODELS[0])).rejects.toThrow('503');});
+});
+describe('実測CSV',()=>{
+ it('JST毎正時をUTCにして実測を読み込む',()=>{const result=parseObservationCsv('observed_at,temperature,precipitation\n2026-10-11T12:00:00+09:00,22,0','tokyo','station-source',retrieved);expect(result[0].observedAt).toBe('2026-10-11T03:00:00.000Z');expect(result[0].values.precipitation).toBe(0);expect(result[0].availableAt).toBe(retrieved);});
+ it('空欄は欠測',()=>expect(parseObservationCsv('observed_at,temperature,humidity\n2026-10-11T03:00:00Z,20,','tokyo','station',retrieved)[0].values.humidity).toBeNull());
+ it('未来の観測を拒否',()=>expect(()=>parseObservationCsv('observed_at,temperature\n2026-10-20T03:00:00Z,20','tokyo','station',retrieved)).toThrow('過去'));
+ it('実測に確率を入れない',()=>expect(()=>parseObservationCsv('observed_at,probability\n2026-10-10T03:00:00Z,.5','tokyo','station',retrieved)).toThrow('確率'));
+ it('出典なし・offsetなし・異常値・重複を拒否',()=>{for(const csv of ['observed_at,temperature\n2026-10-10T03:00:00,20','observed_at,humidity\n2026-10-10T03:00:00Z,110','observed_at,temperature\n2026-10-10T03:00:00Z,20\n2026-10-10T03:00:00Z,21']) expect(()=>parseObservationCsv(csv,'tokyo','station',retrieved)).toThrow();expect(()=>parseObservationCsv('observed_at,temperature\n2026-10-10T03:00:00Z,20','tokyo','',retrieved)).toThrow('出典');});
+});
